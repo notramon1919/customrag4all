@@ -5,5 +5,5 @@ flask
 flask-cors
 PyMuPDF
 ngrok
-torch
-accelerate
+google-genai
+python-dotenv

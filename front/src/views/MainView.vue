@@ -1,10 +1,13 @@
 <script setup>
-import {ref} from 'vue'
+import { ref } from 'vue'
+
+const baseUrl = window.location.origin;
 
 // Subida de archivo
 const fileList = ref([])
 const uploading = ref(false)
 const uploadResponse = ref('')
+const uploadSuccess = ref(false)
 
 // Pregunta y respuesta
 const pregunta = ref('')
@@ -15,6 +18,7 @@ const preguntando = ref(false)
 const handleUpload = async () => {
   if (fileList.value.length === 0) {
     uploadResponse.value = 'Selecciona un archivo PDF primero.'
+    uploadSuccess.value = false
     return
   }
 
@@ -24,21 +28,25 @@ const handleUpload = async () => {
 
   uploading.value = true
   uploadResponse.value = ''
+  uploadSuccess.value = false
 
   try {
-    const res = await fetch('http://localhost:5000/upload_pdf', {
+    const res = await fetch(`${baseUrl}/upload_pdf`, {
       method: 'POST',
       body: formData
     })
 
     const data = await res.json()
     if (res.ok) {
-      uploadResponse.value = data.mensaje
+      uploadResponse.value = `✅ El archivo se ha subido y guardado correctamente en Supabase.`
+      uploadSuccess.value = true
     } else {
-      uploadResponse.value = data.error || 'Error al subir el archivo.'
+      uploadResponse.value = data.error || '❌ Error al subir el archivo.'
+      uploadSuccess.value = false
     }
   } catch (err) {
-    uploadResponse.value = 'Error de red o del servidor.'
+    uploadResponse.value = '❌ Error de red o del servidor.'
+    uploadSuccess.value = false
   } finally {
     uploading.value = false
     fileList.value = []
@@ -56,12 +64,12 @@ const hacerPregunta = async () => {
   respuesta.value = ''
 
   try {
-    const res = await fetch('http://localhost:5000/question', {
+    const res = await fetch(`${baseUrl}/question`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({question: pregunta.value})
+      body: JSON.stringify({ question: pregunta.value })
     })
 
     const data = await res.json()
@@ -82,7 +90,6 @@ const hacerPregunta = async () => {
   <main class="p-6">
     <n-card title="Subir PDF a Supabase" class="max-w-xl mx-auto mb-6">
       <n-space vertical size="large">
-
         <!-- Uploader -->
         <n-upload
             multiple
@@ -94,30 +101,31 @@ const hacerPregunta = async () => {
           <n-upload-dragger>
             <div style="margin-bottom: 12px">
               <n-icon size="48">
-              <i class="mdi mdi-upload" />
-            </n-icon>
+                <i class="mdi mdi-upload" />
+              </n-icon>
             </div>
             <n-text style="font-size: 16px">
               Hazme click para seleccionar un PDF o arrastrame uno!
             </n-text>
             <n-p depth="3" style="margin: 8px 0 0 0">
-              De momento no se controla que puedas subir duplicados así que ten cuidado! :D kys
+              Por ahora no se detectan duplicados, así que ten cuidado al subir documentos.
             </n-p>
           </n-upload-dragger>
         </n-upload>
 
         <!-- Botón subir PDF -->
-        <n-button
-            type="primary"
-            :loading="uploading"
-            @click="handleUpload"
-        >
+        <n-button type="primary" :loading="uploading" @click="handleUpload">
           Subir PDF
         </n-button>
 
-        <n-text v-if="uploadResponse" type="info">
+        <!-- Mensaje de respuesta -->
+        <n-alert
+            v-if="uploadResponse"
+            :type="uploadSuccess ? 'success' : 'error'"
+            show-icon
+        >
           {{ uploadResponse }}
-        </n-text>
+        </n-alert>
       </n-space>
     </n-card>
 
@@ -130,11 +138,7 @@ const hacerPregunta = async () => {
             autosize
         />
 
-        <n-button
-            type="primary"
-            :loading="preguntando"
-            @click="hacerPregunta"
-        >
+        <n-button type="primary" :loading="preguntando" @click="hacerPregunta">
           Enviar pregunta
         </n-button>
 

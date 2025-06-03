@@ -1,0 +1,47 @@
+# ───── FRONTEND (Vue) ─────
+/front/dist/
+/front/node_modules/
+/front/.vite/
+/front/.env.local
+/front/.env.*.local
+/front/.output/
+
+# Optional: IDE config for Vue
+/front/.idea/
+/front/.DS_Store
+
+# ───── BACKEND (Flask + Python) ─────
+/back/__pycache__/
+/back/*.pyc
+/back/*.pyo
+/back/*.pyd
+/back/.Python
+/back/env/
+/back/venv/
+/back/.venv/
+/back/.mypy_cache/
+/back/.pytest_cache/
+/back/instance/
+/back/.env
+
+# Optional: Flask-specific
+/back/.flaskenv
+/back/*.log
+/back/.coverage
+/back/coverage.xml
+/back/htmlcov/
+
+# ───── GENERAL ─────
+*.log
+*.sqlite3
+.env
+.env.*
+
+# ───── IDEs y OS ─────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ───── NGROK (opcional) ─────
+.ngrok2/
