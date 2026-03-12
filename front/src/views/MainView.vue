@@ -1,151 +1,103 @@
 <script setup>
 import { ref } from 'vue'
 
-const baseUrl = window.location.origin;
-
-// Subida de archivo
+const backendUrl = 'http://localhost:5000';
 const fileList = ref([])
 const uploading = ref(false)
 const uploadResponse = ref('')
-const uploadSuccess = ref(false)
+const archivoActivo = ref(localStorage.getItem('doc_activo') || 'Ninguno')
 
-// Pregunta y respuesta
 const pregunta = ref('')
 const respuesta = ref('')
 const preguntando = ref(false)
 
-// Subir PDF
 const handleUpload = async () => {
-  if (fileList.value.length === 0) {
-    uploadResponse.value = 'Selecciona un archivo PDF primero.'
-    uploadSuccess.value = false
-    return
-  }
-
-  const file = fileList.value[0].file
+  if (fileList.value.length === 0) return
   const formData = new FormData()
-  formData.append('file', file)
+  formData.append('file', fileList.value[0].file)
 
   uploading.value = true
-  uploadResponse.value = ''
-  uploadSuccess.value = false
-
   try {
-    const res = await fetch(`${baseUrl}/upload_pdf`, {
-      method: 'POST',
-      body: formData
-    })
-
+    const res = await fetch(`${backendUrl}/upload`, { method: 'POST', body: formData })
     const data = await res.json()
     if (res.ok) {
-      uploadResponse.value = `✅ El archivo se ha subido y guardado correctamente en Supabase.`
-      uploadSuccess.value = true
-    } else {
-      uploadResponse.value = data.error || '❌ Error al subir el archivo.'
-      uploadSuccess.value = false
+      archivoActivo.value = data.filename
+      localStorage.setItem('doc_activo', data.filename)
+      uploadResponse.value = `Cargado: ${data.filename}`
     }
   } catch (err) {
-    uploadResponse.value = '❌ Error de red o del servidor.'
-    uploadSuccess.value = false
+    uploadResponse.value = 'Error de conexión'
   } finally {
     uploading.value = false
     fileList.value = []
   }
 }
 
-// Preguntar
 const hacerPregunta = async () => {
-  if (!pregunta.value.trim()) {
-    respuesta.value = 'Escribe una pregunta primero.'
-    return
-  }
-
+  if (!pregunta.value.trim()) return
   preguntando.value = true
-  respuesta.value = ''
-
   try {
-    const res = await fetch(`${baseUrl}/question`, {
+    const res = await fetch(`${backendUrl}/ask`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ question: pregunta.value })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pregunta: pregunta.value })
     })
-
     const data = await res.json()
-    if (res.ok) {
-      respuesta.value = data.respuesta
-    } else {
-      respuesta.value = data.error || 'Error al procesar la pregunta.'
-    }
-  } catch (err) {
-    respuesta.value = 'Error de red o del servidor.'
+    respuesta.value = data.respuesta
+    archivoActivo.value = data.archivo_activo
   } finally {
     preguntando.value = false
   }
 }
+
+const handleClear = async () => {
+  pregunta.value = ''
+  respuesta.value = ''
+  await fetch(`${backendUrl}/clear`, { method: 'DELETE' })
+  archivoActivo.value = 'Ninguno'
+  localStorage.removeItem('doc_activo')
+  respuesta.value = ''
+}
 </script>
 
 <template>
-  <main class="p-6">
-    <n-card title="Subir PDF a Supabase" class="max-w-xl mx-auto mb-6">
-      <n-space vertical size="large">
-        <!-- Uploader -->
-        <n-upload
-            multiple
-            :max="1"
-            v-model:file-list="fileList"
-            accept=".pdf"
-            :custom-request="() => {}"
-        >
-          <n-upload-dragger>
+  <main class="p-6 max-w-2xl mx-auto">
+    <n-card title="RAG Documento Único" class="mb-4">
+      <div class="mb-4 p-2 bg-blue-50 border-l-4 border-blue-500 text-blue-700">
+        <strong>Documento activo:</strong> {{ archivoActivo }}
+      </div>
+
+      <n-upload :max="1" v-model:file-list="fileList" accept=".pdf" :custom-request="() => {}">
+        <n-upload-dragger>
             <div style="margin-bottom: 12px">
               <n-icon size="48">
                 <i class="mdi mdi-upload" />
               </n-icon>
             </div>
             <n-text style="font-size: 16px">
-              Hazme click para seleccionar un PDF o arrastrame uno!
+              Hazme click para seleccionar un PDF o arrastrame uno.
             </n-text>
-            <n-p depth="3" style="margin: 8px 0 0 0">
-              Por ahora no se detectan duplicados, así que ten cuidado al subir documentos.
-            </n-p>
           </n-upload-dragger>
-        </n-upload>
+      </n-upload>
 
-        <!-- Botón subir PDF -->
-        <n-button type="primary" :loading="uploading" @click="handleUpload">
-          Subir PDF
-        </n-button>
-
-        <!-- Mensaje de respuesta -->
-        <n-alert
-            v-if="uploadResponse"
-            :type="uploadSuccess ? 'success' : 'error'"
-            show-icon
-        >
-          {{ uploadResponse }}
-        </n-alert>
-      </n-space>
+      <n-button type="primary" block :loading="uploading" @click="handleUpload" class="mt-4">
+        Cambiar Documento Activo
+      </n-button>
     </n-card>
 
-    <n-card title="Preguntar sobre los documentos subidos" class="max-w-xl mx-auto">
-      <n-space vertical size="large">
-        <n-input
-            v-model:value="pregunta"
-            placeholder="Escribe tu pregunta aquí"
-            type="textarea"
-            autosize
-        />
-
-        <n-button type="primary" :loading="preguntando" @click="hacerPregunta">
-          Enviar pregunta
-        </n-button>
-
-        <n-text v-if="respuesta" type="success">
-          {{ respuesta }}
-        </n-text>
-      </n-space>
+    <n-card v-if="archivoActivo !== 'Ninguno'">
+      <n-input v-model:value="pregunta" type="textarea" placeholder="Pregunta algo..." />
+      <n-button type="info" block :loading="preguntando" @click="hacerPregunta" class="mt-2">
+        Preguntar a Qwen
+      </n-button>
+      
+      <div v-if="respuesta" class="mt-4 p-4 bg-gray-100 rounded text-sm font-mono">
+        {{ respuesta }}
+      </div>
     </n-card>
+
+    <n-button ghost type="error" size="small" @click="handleClear" class="mt-4">
+      Limpiar Documento
+    </n-button>
   </main>
 </template>

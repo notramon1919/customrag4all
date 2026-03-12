@@ -1,9 +1,7 @@
-supabase
-transformers
-sentence-transformers
+ollama
 flask
 flask-cors
+chromadb
+sentence-transformers
 PyMuPDF
-ngrok
-google-genai
 python-dotenv

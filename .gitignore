@@ -24,6 +24,10 @@
 /back/instance/
 /back/.env
 
+# --- DATOS Y ARCHIVOS DEL RAG ---
+/back/db_data/
+/back/*.pdf
+
 # Optional: Flask-specific
 /back/.flaskenv
 /back/*.log
@@ -34,7 +38,7 @@
 # ───── GENERAL ─────
 *.log
 *.sqlite3
-.env
+.env*
 .env.*
 
 # ───── IDEs y OS ─────
@@ -42,6 +46,3 @@
 .idea/
 .DS_Store
 Thumbs.db
-
-# ───── NGROK (opcional) ─────
-.ngrok2/

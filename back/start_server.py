@@ -1,145 +1,88 @@
 import os
-import ngrok
-import fitz
-from dotenv import load_dotenv
-from flask import Flask, request, jsonify, render_template
+import fitz  # PyMuPDF
+import chromadb
+import ollama
+from flask import Flask, request, jsonify
 from flask_cors import CORS
-from sentence_transformers import SentenceTransformer, util
-from supabase import create_client, Client
-from google import genai
+from chromadb.utils import embedding_functions
 
-app = Flask(__name__, template_folder='templates')
-CORS(app, origins="*")
+app = Flask(__name__)
+CORS(app)
 
-load_dotenv(dotenv_path=".env", override=True)
+MODELO_LLM = "qwen2.5:7b"
+chroma_client = chromadb.PersistentClient(path="./db_data")
+model_ef = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
+collection = chroma_client.get_or_create_collection(name="documentos_rag", embedding_function=model_ef)
 
-supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_KEY")
-google_gemini = os.getenv("GEMINI_KEY")
-ngrok_key = os.getenv("NGROK_KEY")
-
-# Establish connectivity (NGROK)
-listener = ngrok.forward(5000, authtoken=ngrok_key)
-print(f"Ingress established at {listener.url()}")
-
-# Supabase
-supabase: Client = create_client(supabase_url, supabase_key)
-
-# Modelo de embeddings y pregunta-respuesta
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-
-# Gemini
-client = genai.Client(api_key=os.getenv("GEMINI_KEY"))
-
-@app.route('/upload_pdf', methods=['POST'])
+@app.route('/upload', methods=['POST'])
 def upload_pdf():
     if 'file' not in request.files:
-        return jsonify({'error': 'No se envió ningún archivo.'}), 400
-
-    # file: type FileStorage (flask)
+        return jsonify({"error": "No hay archivo"}), 400
+    
     file = request.files['file']
-    filename = file.filename
+    file_path = os.path.join("./", file.filename)
+    file.save(file_path)
 
-    if filename == '':
-        return jsonify({'error': 'Nombre de archivo vacío.'}), 400
+    try:
+        existing_docs = collection.get()
+        if existing_docs['ids']:
+            collection.delete(ids=existing_docs['ids'])
 
-    if not filename.endswith('.pdf'):
-        return jsonify({'error': 'Solo se permiten archivos PDF.'}), 400
+        doc = fitz.open(file_path)
+        documents, metadatas, ids = [], [], []
 
-    # Podemos guardarnos el pdf
-    # os.makedirs("./pdfs", exist_ok=True)
-    # file.save("./pdfs")
+        for i, page in enumerate(doc):
+            text = page.get_text().strip()
+            if text:
+                documents.append(text)
+                metadatas.append({"source": file.filename, "page": i + 1})
+                ids.append(f"p{i+1}")
 
-    pdf_bytes = file.read()
+        collection.add(documents=documents, metadatas=metadatas, ids=ids)
+        doc.close()
+        os.remove(file_path)
 
-    # Leer PDF con PyMuPDF
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    texto_completo = ""
-    for page in doc:
-        texto_completo += page.get_text()
+        return jsonify({"message": "Nuevo documento indexado", "filename": file.filename}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-    doc.close()
-
-    # Guardar texto en Supabase
-    supabase.table('documentos').insert({"contenido": texto_completo}).execute()
-
-    return jsonify({'mensaje': f'Archivo {filename} cargado y guardado correctamente.'})
-
-
-# === Pregunta del Usuario ===
-@app.route('/question', methods=['POST'])
-def question():
+@app.route('/ask', methods=['POST'])
+def ask_local_llm():
     data = request.json
-    pregunta = data.get('question')
+    pregunta = data.get("pregunta")
+    
+    current_data = collection.get(limit=1)
+    filename = current_data['metadatas'][0]['source'] if current_data['metadatas'] else "Documento desconocido"
 
-    if not pregunta:
-        return jsonify({'error': 'No se proporcionó ninguna pregunta.'}), 400
+    results = collection.query(query_texts=[pregunta], n_results=6)
+    contexto = "\n".join(results['documents'][0])
 
-    respuesta = responder_pregunta(pregunta)
-    return jsonify({'respuesta': respuesta})
+    prompt_final = f"""Analiza el documento: {filename}.
+                    Responde de forma fría y directa. 
+                    Si la información no está en el contexto, di "No está en el documento".
+                    Prohibido inventar o divagar.
 
+                    CONTEXTO:
+                    {contexto}
 
-# Obtener contexto relevante desde Supabase
-def buscar_en_supabase(pregunta):
-    # Paso 1: Embedding de la pregunta
-    pregunta_emb = embedding_model.encode(pregunta, convert_to_tensor=True)
+                    PREGUNTA:
+                    {pregunta}"""
 
-    # Paso 2: Obtener documentos desde Supabase
-    data = supabase.table('documentos').select("contenido").execute()
-    documentos = [doc['contenido'] for doc in data.data]
-
-    if not documentos:
-        return []
-
-    # Paso 3: Calcular similitud
-    docs_emb = embedding_model.encode(documentos, convert_to_tensor=True)
-    similitudes = util.cos_sim(pregunta_emb, docs_emb)[0]
-
-    top_indices = similitudes.argsort(descending=True)[:1]
-    contextos_relevantes = [documentos[i] for i in top_indices]
-
-    return "\n".join(contextos_relevantes)
-
-
-# Generar respuesta
-def responder_pregunta(pregunta):
-    contextos = buscar_en_supabase(pregunta)
-
-    if not contextos:
-        return "No encontré información relevante en el documento."
-
-    prompt = f"""
-    Eres un asistente de inteligencia artificial especializado en la comprensión y análisis de documentos
-    proporcionados por el usuario. Tu objetivo principal es responder de manera precisa y clara a las preguntas
-    formuladas, basándote exclusivamente en el contenido de los documentos suministrados.
-    Utiliza únicamente la información contenida en los documentos proporcionados para generar tus respuestas.
-    No recurras a conocimientos externos o información adicional que no esté presente en los documentos.
-    Ofrece respuestas directas y fáciles de entender. Si la información relevante es extensa, proporciona un resumen.
-    Cuando sea posible, indica la sección o parte del documento donde se encuentra la información.
-    Si no hay información suficiente en los documentos para responder, indícalo claramente.
-    Mantén un tono respetuoso, profesional y utiliza un lenguaje formal y en español.
-    Evita suposiciones o inferencias no respaldadas por el documento. No generes listas por puntos ni nada de eso.
-    Prioriza siempre la información más reciente en caso de múltiples documentos.
-
-    Contexto:
-    {contextos}
-
-    Pregunta: {pregunta}
-
-    Respuesta:
-    """
-
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=[prompt]
+    response = ollama.generate(
+        model=MODELO_LLM,
+        prompt=prompt_final,
+        options={"temperature": 0.2, "num_ctx": 4000}
     )
+    
+    return jsonify({
+        "respuesta": response['response'],
+        "archivo_activo": filename
+    })
 
-    return response.text.strip()
-
-@app.route('/')
-def landoing():
-    return render_template("index.html")
-
+@app.route('/clear', methods=['DELETE'])
+def clear_db():
+    collection.delete(ids=collection.get()['ids'])
+    return jsonify({"message": "DB vacía"}), 200
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=5000)
+    app.run(debug=True, port=5000, use_reloader=False)
